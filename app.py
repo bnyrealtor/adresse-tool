@@ -2,6 +2,7 @@ import streamlit as st
 import geopandas as gpd
 import gdown
 import os
+import pydeck as pdk
 
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
@@ -15,28 +16,23 @@ def load_data():
         url = f'https://drive.google.com/uc?id={FILE_ID}'
         gdown.download(url, FILENAME, quiet=False)
     gdf = gpd.read_file(FILENAME)
-    
-    # Projektion für Flächenberechnung
+    # Fläche berechnen
     gdf_area = gdf.to_crs("EPSG:25832")
     gdf['flaeche_qm'] = gdf_area.geometry.area
-    
-    # Transformation in WGS84 für die Karte
+    # WGS84 für Karte
     gdf = gdf.to_crs("EPSG:4326")
-    
-    # HIER DIE KORREKTUR: Explizite lat/lon Spalten für st.map erstellen
-    # Wir nehmen den Centroid (Mittelpunkt) des Grundstücks als Koordinatenpunkt
     gdf['lat'] = gdf.geometry.centroid.y
     gdf['lon'] = gdf.geometry.centroid.x
-    
+    # Links für Viewer erstellen (Beispielhaft für die Verknüpfung)
+    gdf['link_markt'] = "https://immobilienmarkt.niedersachsen.de"
     return gdf
 
-with st.spinner("Lade und berechne Flächen..."):
+with st.spinner("Lade Daten..."):
     gdf = load_data()
     
     st.sidebar.header("Suche & Filter")
     gemeinden = sorted(gdf['gem__bez'].unique().tolist())
     auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
-    
     such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
     
     if such_modus == "Mindestgröße":
@@ -56,8 +52,11 @@ with st.spinner("Lade und berechne Flächen..."):
         st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
         
         if not filtered_gdf.empty:
+            # Karte mit Hover-Effekt und Info-Fenster
+            st.pydeck_chart(pdk.Deck(
+                initial_view_state=pdk.ViewState(latitude=filtered_gdf['lat'].mean(), longitude=filtered_gdf['lon'].mean(), zoom=13),
+                layers=[pdk.Layer("ScatterplotLayer", filtered_gdf, get_position='[lon, lat]', 
+                                  get_radius=20, get_color='[200, 30, 0, 160]', pickable=True)],
+                tooltip={"html": "<b>Flurstück:</b> {fs_text}<br/><b>Größe:</b> {flaeche_qm} qm<br/><a href='{link_markt}' target='_blank'>Zum Immobilienmarkt</a>"}
+            ))
             st.dataframe(filtered_gdf[['gmk__bez', 'gem__bez', 'flaeche_qm', 'fs_text']])
-            # st.map nutzt jetzt die neuen 'lat' und 'lon' Spalten automatisch!
-            st.map(filtered_gdf.head(100))
-        else:
-            st.warning("Keine Objekte für diese Filter gefunden.")
