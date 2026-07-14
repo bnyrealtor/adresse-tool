@@ -1,6 +1,6 @@
 import streamlit as st
 import geopandas as gpd
-from owslib.wfs import WebFeatureService
+import requests
 from geopy.geocoders import Nominatim
 from pyproj import Transformer
 import folium
@@ -15,8 +15,8 @@ gemeinden_ammerland = ["Apen", "Bad Zwischenahn", "Edewecht", "Rastede", "Wester
 gemeinde = st.sidebar.selectbox("Gemeinde", gemeinden_ammerland, index=2)
 
 groesse_option = st.sidebar.radio("Größen-Modus", ["Exakt", "Mindestgröße"])
-groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=None, placeholder="z.B. 1000")
-toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=3, placeholder="z.B. 3")
+groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=None, placeholder="z.B. 500")
+toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=None, placeholder="z.B. 50")
 
 start_search = st.sidebar.button("Suche starten")
 
@@ -27,16 +27,35 @@ st.title("Immobilien-Abfrage & Grundsteuer-Tool")
 def get_coords(gemeinde_name):
     geolocator = Nominatim(user_agent="radtke_immo_tool")
     query = f"{gemeinde_name}, Landkreis Ammerland, Niedersachsen, Germany"
-    location = geolocator.geocode(query)
-    return (location.latitude, location.longitude) if location else None
+    try:
+        location = geolocator.geocode(query)
+        return (location.latitude, location.longitude) if location else None
+    except:
+        return None
 
 def fetch_wfs_data(lat, lon):
-    wfs = WebFeatureService(url="https://opendata.lgln.niedersachsen.de/wfs/gds_alkis", version="2.0.0")
+    # Transformation zu ETRS89/UTM32N für den WFS-BBox-Filter
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:25832", always_xy=True)
     e, n = transformer.transform(lon, lat)
-    bbox = (e-1000, n-1000, e+1000, n+1000) 
-    response = wfs.getfeature(typename='alkis:flurstueck', bbox=bbox, outputFormat='json')
-    return gpd.read_file(response)
+    
+    url = "https://opendata.lgln.niedersachsen.de/wfs/gds_alkis"
+    params = {
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeName": "alkis:flurstueck",
+        "bbox": f"{e-1000},{n-1000},{e+1000},{n+1000}",
+        "outputFormat": "application/json",
+        "srsName": "EPSG:4326"
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return gpd.read_file(response.text)
+    except Exception as e:
+        st.error(f"Fehler beim Abruf: {e}")
+        return gpd.GeoDataFrame()
 
 # --- LOGIK ---
 if start_search:
@@ -50,7 +69,7 @@ if start_search:
                 gdf = fetch_wfs_data(lat, lon)
                 
                 if not gdf.empty:
-                    # Spalten-Erkennung
+                    # Dynamische Spaltensuche
                     size_col = next((col for col in ['flaeche', 'flaeche_qm', 'amtliche_flaeche', 'area'] if col in gdf.columns), None)
                     
                     t = toleranz if toleranz is not None else 0
@@ -63,7 +82,7 @@ if start_search:
                         filtered_gdf = gdf
                     
                     if not filtered_gdf.empty:
-                        st.success(f"{len(filtered_gdf)} Flurstücke gefunden!")
+                        st.success(f"{len(filtered_gdf)} Flurstücke in {gemeinde} gefunden!")
                         m = folium.Map(location=[lat, lon], zoom_start=14)
                         
                         for _, row in filtered_gdf.iterrows():
@@ -81,7 +100,9 @@ if start_search:
                                     </a>
                                 </div>
                             """
-                            folium.Marker([row.geometry.centroid.y, row.geometry.centroid.x], 
+                            # Marker korrekt setzen
+                            centroid = row.geometry.centroid
+                            folium.Marker([centroid.y, centroid.x], 
                                           popup=folium.Popup(popup_html, max_width=250)).add_to(m)
                         
                         st_folium(m, width=1000, height=600)
