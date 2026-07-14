@@ -7,6 +7,7 @@ from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
+# Konfiguration
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
 
@@ -32,22 +33,27 @@ def load_data():
     gdf = gdf.to_crs("EPSG:4326")
     return gdf
 
-with st.spinner("Lade Daten..."):
+# Daten laden
+with st.spinner("Lade und berechne Flächen..."):
     gdf = load_data()
 
+# Sidebar
 st.sidebar.header("Suche & Filter")
 gemeinden = sorted(gdf['gem__bez'].unique().tolist())
 auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
 
 such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
+
 if such_modus == "Mindestgröße":
     size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
+    tolerance = 0.0 # Nicht benötigt im Mindestgrößen-Modus
 else:
     size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
-    tolerance = st.sidebar.slider("Toleranz (+/- qm)", 0.0, 50.0, 5.0)
+    # Toleranz als Eingabefeld mit Standardwert 3
+    tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, value=3.0, step=1.0)
 
+# Suche ausführen
 if st.sidebar.button("Suchen"):
-    # Filtern
     if such_modus == "Mindestgröße":
         filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
     else:
@@ -58,12 +64,12 @@ if st.sidebar.button("Suchen"):
     st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
     
     if not filtered_gdf.empty:
-        # Karte zentrieren auf den Mittelwert der Ergebnisse
+        # Karte zentrieren auf die Ergebnisse
         m = folium.Map(location=[filtered_gdf.geometry.centroid.y.mean(), 
                                  filtered_gdf.geometry.centroid.x.mean()], 
                        zoom_start=15)
         
-        # Marker hinzufügen (begrenzt auf 20, um Geocoding-Limits zu schonen)
+        # Marker hinzufügen (auf 20 begrenzt für Geocoding-Performance)
         for idx, row in filtered_gdf.head(20).iterrows():
             lat = row.geometry.centroid.y
             lon = row.geometry.centroid.x
@@ -85,4 +91,4 @@ if st.sidebar.button("Suchen"):
         
         st_folium(m, width=None, height=700)
     else:
-        st.warning("Keine Objekte gefunden.")
+        st.warning("Keine Objekte für diese Filter gefunden.")
