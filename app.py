@@ -19,7 +19,7 @@ if 'show_map' not in st.session_state:
 # Sidebar für die Eingabe
 with st.sidebar:
     st.header("Suche")
-    gemarkung = st.selectbox("Gemarkung wählen", AMMERLAND_GEMEINDEN)
+    gemarkung = st.selectbox("Gemeinde wählen", AMMERLAND_GEMEINDEN)
     
     such_modus = st.radio("Modus", ["Exakte Größe", "Minimale Größe"])
     ziel_groesse = st.number_input("Grundstücksgröße (m²)", min_value=0, value=500)
