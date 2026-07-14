@@ -23,29 +23,22 @@ start_search = st.sidebar.button("Suche starten")
 # --- HAUPTTEIL ---
 st.title("Immobilien-Abfrage & Grundsteuer-Tool")
 
-# --- FUNKTIONEN ---
-def get_coords(gemeinde_name):
-    geolocator = Nominatim(user_agent="radtke_immo_tool")
-    query = f"{gemeinde_name}, Landkreis Ammerland, Niedersachsen, Germany"
-    try:
-        location = geolocator.geocode(query)
-        return (location.latitude, location.longitude) if location else None
-    except:
-        return None
-
 def fetch_wfs_data(lat, lon):
-    # Transformation zu ETRS89/UTM32N für den WFS-BBox-Filter
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:25832", always_xy=True)
     e, n = transformer.transform(lon, lat)
     
+    # Korrigierte URL: Das LGLN nutzt für ALKIS oft einen anderen Dienst-Pfad
+    # Wir nutzen hier den WFS-Dienst für "Gemarkungen/Flurstücke"
     url = "https://opendata.lgln.niedersachsen.de/wfs/gds_alkis"
+    
+    # Viele WFS-Dienste erlauben kein application/json direkt. 
+    # Wir fordern GML an, da Geopandas das lesen kann.
     params = {
         "service": "WFS",
         "version": "2.0.0",
         "request": "GetFeature",
-        "typeName": "alkis:flurstueck",
+        "typeName": "alkis:Flurstueck", # Beachte das große F bei Flurstueck
         "bbox": f"{e-1000},{n-1000},{e+1000},{n+1000}",
-        "outputFormat": "application/json",
         "srsName": "EPSG:4326"
     }
     
@@ -54,23 +47,23 @@ def fetch_wfs_data(lat, lon):
         response.raise_for_status()
         return gpd.read_file(response.text)
     except Exception as e:
-        st.error(f"Fehler beim Abruf: {e}")
+        st.error(f"Datenabruf fehlgeschlagen: {e}")
         return gpd.GeoDataFrame()
 
-# --- LOGIK ---
 if start_search:
     if groesse_wert is None:
         st.sidebar.error("Bitte Größe eingeben!")
     else:
         with st.spinner(f"Suche Flurstücke in {gemeinde}..."):
-            coords = get_coords(gemeinde)
-            if coords:
-                lat, lon = coords
-                gdf = fetch_wfs_data(lat, lon)
+            geolocator = Nominatim(user_agent="radtke_immo_tool")
+            location = geolocator.geocode(f"{gemeinde}, Landkreis Ammerland, Germany")
+            
+            if location:
+                gdf = fetch_wfs_data(location.latitude, location.longitude)
                 
                 if not gdf.empty:
-                    # Dynamische Spaltensuche
-                    size_col = next((col for col in ['flaeche', 'flaeche_qm', 'amtliche_flaeche', 'area'] if col in gdf.columns), None)
+                    # Spalten-Erkennung (ALKIS-Standard ist oft 'flaeche')
+                    size_col = next((col for col in ['flaeche', 'flaechenmass'] if col in gdf.columns), None)
                     
                     t = toleranz if toleranz is not None else 0
                     if size_col:
@@ -83,7 +76,7 @@ if start_search:
                     
                     if not filtered_gdf.empty:
                         st.success(f"{len(filtered_gdf)} Flurstücke in {gemeinde} gefunden!")
-                        m = folium.Map(location=[lat, lon], zoom_start=14)
+                        m = folium.Map(location=[location.latitude, location.longitude], zoom_start=14)
                         
                         for _, row in filtered_gdf.iterrows():
                             adresse = row.get('lagebezeichnung', 'Adresse unbekannt')
@@ -100,15 +93,13 @@ if start_search:
                                     </a>
                                 </div>
                             """
-                            # Marker korrekt setzen
                             centroid = row.geometry.centroid
-                            folium.Marker([centroid.y, centroid.x], 
-                                          popup=folium.Popup(popup_html, max_width=250)).add_to(m)
+                            folium.Marker([centroid.y, centroid.x], popup=folium.Popup(popup_html, max_width=250)).add_to(m)
                         
                         st_folium(m, width=1000, height=600)
                     else:
-                        st.warning("Keine passenden Flurstücke gefunden.")
+                        st.warning("Keine Flurstücke in dieser Größe gefunden.")
                 else:
-                    st.warning("Keine Daten vom Katasteramt erhalten.")
+                    st.warning("Keine Daten erhalten. Prüfe die Layer-Eigenschaften.")
             else:
-                st.error("Koordinaten für Gemeinde nicht gefunden.")
+                st.error("Gemeinde nicht gefunden.")
