@@ -22,8 +22,8 @@ with st.sidebar:
     gemarkung = st.selectbox("Gemeinde wählen", AMMERLAND_GEMEINDEN)
     
     such_modus = st.radio("Modus", ["Exakte Größe", "Minimale Größe"])
-    ziel_groesse = st.number_input("Grundstücksgröße (m²)", min_value=0, value=500)
-    toleranz = st.number_input("Toleranz (+/- in %)", min_value=0, max_value=100, value=10)
+    ziel_groesse = st.number_input("Grundstücksgröße (m²)", min_value=0, value=None)
+    toleranz = st.number_input("Toleranz (+/- in %)", min_value=0, max_value=1000, value=3)
     
     if st.button("Abfrage starten"):
         st.session_state.show_map = True
