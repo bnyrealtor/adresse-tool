@@ -8,14 +8,15 @@ from streamlit_folium import st_folium
 
 # Konfiguration
 st.set_page_config(page_title="Immobilien-Tool", layout="wide")
-st.title("LGLN Immobilien-Daten-Tool")
+st.title("LGLN Grundstücks-Daten-Tool")
 
-# 1. Funktionen definieren
+# 1. Geocoding
 def get_coords(address):
     geolocator = Nominatim(user_agent="radtke_immo_tool_v2")
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
+# 2. WFS-Abfrage
 def fetch_wfs_data(lat, lon):
     try:
         wfs = WebFeatureService(url="https://opendata.lgln.niedersachsen.de/wfs/gds_alkis", version="2.0.0")
@@ -27,13 +28,13 @@ def fetch_wfs_data(lat, lon):
     except:
         return None
 
-# 2. Sidebar für die Eingabe
+# 3. Sidebar für Eingabe
 with st.sidebar:
     st.header("Suche")
     address_input = st.text_input("Adresse eingeben (Straße, PLZ, Ort)")
     run_button = st.button("Abfrage starten")
 
-# 3. Hauptbereich für die Karte
+# 4. Hauptbereich
 if run_button:
     coords = get_coords(address_input)
     if coords:
@@ -41,17 +42,25 @@ if run_button:
         gdf = fetch_wfs_data(lat, lon)
         
         if gdf is not None and not gdf.empty:
+            # DEBUG: Zeigt verfügbare Spalten, um den korrekten Namen für die Fläche zu finden
+            # st.write(gdf.iloc[0]) 
+            
+            # Passe 'flaeche' an den tatsächlichen Spaltennamen aus deinem WFS-Layer an
+            groesse = gdf.iloc[0].get('flaeche', 'N/A')
             adresse_text = gdf.iloc[0].get('lagebezeichnung', 'Adresse nicht verfügbar')
             
             # HTML Popup
             popup_html = f"""
             <div style="width: 250px; font-family: sans-serif; padding: 5px;">
-                <div style="font-size: 16px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+                <div style="font-size: 16px; font-weight: bold; margin-bottom: 5px;">
+                    Größe: {groesse} m²
+                </div>
+                <div style="font-size: 14px; margin-bottom: 12px; color: #555;">
                     {adresse_text}
                 </div>
-                <button onclick="navigator.clipboard.writeText('{adresse_text}'); alert('Kopiert: {adresse_text}');" 
+                <button onclick="navigator.clipboard.writeText('{groesse} m²'); alert('Größe kopiert: {groesse} m²');" 
                         style="background-color: #007bff; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 8px;">
-                    📋 Adresse kopieren
+                    📋 Größe kopieren
                 </button>
                 <a href="https://grundsteuer-viewer.niedersachsen.de/b" target="_blank" 
                    style="background-color: #28a745; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; width: 100%; text-align: center; display: block; text-decoration: none; font-weight: bold;">
@@ -68,5 +77,3 @@ if run_button:
             st.warning("Keine Daten gefunden.")
     else:
         st.error("Adresse nicht gefunden.")
-else:
-    st.info("Bitte gib eine Adresse in der Sidebar ein und klicke auf 'Abfrage starten'.")
