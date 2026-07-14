@@ -1,68 +1,88 @@
 import streamlit as st
+import geopandas as gpd
+import gdown
+import os
 import folium
 from streamlit_folium import st_folium
-import geopandas as gpd
-from owslib.wfs import WebFeatureService
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
 
-# Konfiguration
-st.set_page_config(page_title="Immobilien-Tool", layout="wide")
-st.title("LGLN Grundstücks-Daten-Tool")
+st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
+st.title("Immobilien-Suche: Landkreis Ammerland")
 
-# Gemarkungen
-AMMERLAND_GEMEINDEN = sorted([
-    "Apen", "Bad Zwischenahn", "Edewecht", "Friedrichsfehn", 
-    "Rastede", "Westerstede", "Wiefelstede"
-])
+FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
+FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
 
-if 'show_map' not in st.session_state:
-    st.session_state.show_map = False
+# Geocoder initialisieren
+geolocator = Nominatim(user_agent="radtke_immo_tool_v3")
+geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
 
-with st.sidebar:
-    st.header("Suche")
-    gemarkung = st.selectbox("Gemeinde wählen", AMMERLAND_GEMEINDEN)
-    such_modus = st.radio("Modus", ["Exakte Größe", "Minimale Größe"])
-    ziel_groesse = st.number_input("Grundstücksgröße (m²)", min_value=0, value=500)
-    toleranz = st.number_input("Toleranz (+/- in %)", min_value=0, max_value=100, value=3)
+@st.cache_data
+def load_data():
+    if not os.path.exists(FILENAME):
+        url = f'https://drive.google.com/uc?id={FILE_ID}'
+        gdown.download(url, FILENAME, quiet=False)
+    gdf = gpd.read_file(FILENAME)
     
-    if st.button("Abfrage starten"):
-        st.session_state.show_map = True
-
-if st.session_state.show_map:
-    st.write(f"Suche in {gemarkung}...")
+    # Projektion für exakte Flächenberechnung
+    gdf_area = gdf.to_crs("EPSG:25832")
+    gdf['flaeche_qm'] = gdf_area.geometry.area
     
-    try:
-        # LGLN OGC Dienst URL
-        wfs_url = "https://opendata.lgln.niedersachsen.de/wfs/gds_alkis"
-        wfs = WebFeatureService(url=wfs_url, version="2.0.0")
-        
-        # HILFE ZUR FEHLERSUCHE: 
-        # Wenn hier ein Fehler kommt, zeigt diese Zeile uns die korrekten Namen an:
-        st.write("Verfügbare Layer auf dem Server:", list(wfs.contents.keys()))
-        
-        # Abfrage Logik
-        # Hinweis: 'alkis:flurstueck' muss ggf. durch einen der Namen aus der Liste oben ersetzt werden
-        typename = 'alkis:flurstueck' 
-        
-        # Filter (CQL)
-        cql_filter = f"flaeche >= {ziel_groesse * (1 - toleranz/100)}"
-        
-        response = wfs.getfeature(typename=typename, cql_filter=cql_filter, maxFeatures=20, outputFormat='json')
-        gdf = gpd.read_file(response)
-        
-        if not gdf.empty:
-            m = folium.Map(location=[53.25, 7.95], zoom_start=12)
-            for _, row in gdf.iterrows():
-                folium.Marker(
-                    location=[row.geometry.centroid.y, row.geometry.centroid.x],
-                    popup=f"Größe: {row.get('flaeche', 'N/A')} m²",
-                    icon=folium.Icon(color='blue', icon='home')
-                ).add_to(m)
-            st_folium(m, width=None, height=700)
-        else:
-            st.warning("Keine Daten gefunden. Überprüfe die Layer-Namen oben.")
-            
-    except Exception as e:
-        st.error(f"Fehler: {e}")
-        st.info("Hinweis: Falls der Fehler '404' bleibt, ist die URL des WFS-Dienstes beim LGLN veraltet.")
+    # Zurück zu WGS84 für Kartenanzeige
+    gdf = gdf.to_crs("EPSG:4326")
+    return gdf
+
+with st.spinner("Lade Daten..."):
+    gdf = load_data()
+
+st.sidebar.header("Suche & Filter")
+gemeinden = sorted(gdf['gem__bez'].unique().tolist())
+auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
+
+such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
+if such_modus == "Mindestgröße":
+    size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
 else:
-    st.info("Bitte Parameter wählen und Suche starten.")
+    size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
+    tolerance = st.sidebar.slider("Toleranz (+/- qm)", 0.0, 50.0, 5.0)
+
+if st.sidebar.button("Suchen"):
+    # Filtern
+    if such_modus == "Mindestgröße":
+        filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
+    else:
+        filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & 
+                           (gdf['flaeche_qm'] >= size_input - tolerance) & 
+                           (gdf['flaeche_qm'] <= size_input + tolerance)]
+    
+    st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
+    
+    if not filtered_gdf.empty:
+        # Karte zentrieren auf den Mittelwert der Ergebnisse
+        m = folium.Map(location=[filtered_gdf.geometry.centroid.y.mean(), 
+                                 filtered_gdf.geometry.centroid.x.mean()], 
+                       zoom_start=15)
+        
+        # Marker hinzufügen (begrenzt auf 20, um Geocoding-Limits zu schonen)
+        for idx, row in filtered_gdf.head(20).iterrows():
+            lat = row.geometry.centroid.y
+            lon = row.geometry.centroid.x
+            
+            # Adresse auflösen
+            try:
+                location = geocode((lat, lon))
+                adresse = location.address if location else "Adresse nicht gefunden"
+            except:
+                adresse = "Geocoding Fehler"
+                
+            popup_text = f"<b>Adresse:</b> {adresse}<br><b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br><b>FS:</b> {row['fs_text']}"
+            
+            folium.Marker(
+                [lat, lon], 
+                popup=folium.Popup(popup_text, max_width=300),
+                icon=folium.Icon(color='blue', icon='home')
+            ).add_to(m)
+        
+        st_folium(m, width=None, height=700)
+    else:
+        st.warning("Keine Objekte gefunden.")
