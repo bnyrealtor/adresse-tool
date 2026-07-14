@@ -2,7 +2,8 @@ import streamlit as st
 import geopandas as gpd
 import gdown
 import os
-import pydeck as pdk
+import folium
+from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
@@ -16,16 +17,9 @@ def load_data():
         url = f'https://drive.google.com/uc?id={FILE_ID}'
         gdown.download(url, FILENAME, quiet=False)
     gdf = gpd.read_file(FILENAME)
-    # Fläche berechnen
     gdf_area = gdf.to_crs("EPSG:25832")
     gdf['flaeche_qm'] = gdf_area.geometry.area
-    # WGS84 für Karte
-    gdf = gdf.to_crs("EPSG:4326")
-    gdf['lat'] = gdf.geometry.centroid.y
-    gdf['lon'] = gdf.geometry.centroid.x
-    # Links für Viewer erstellen (Beispielhaft für die Verknüpfung)
-    gdf['link_markt'] = "https://immobilienmarkt.niedersachsen.de"
-    return gdf
+    return gdf.to_crs("EPSG:4326")
 
 with st.spinner("Lade Daten..."):
     gdf = load_data()
@@ -33,30 +27,32 @@ with st.spinner("Lade Daten..."):
     st.sidebar.header("Suche & Filter")
     gemeinden = sorted(gdf['gem__bez'].unique().tolist())
     auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
-    such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
-    
-    if such_modus == "Mindestgröße":
-        size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
-    else:
-        size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
-        tolerance = st.sidebar.slider("Toleranz (+/- qm)", 0.0, 50.0, 5.0)
+    size_input = st.sidebar.number_input("Mindestgröße in qm", min_value=0.0, step=10.0)
 
     if st.sidebar.button("Suchen"):
-        if such_modus == "Mindestgröße":
-            filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
-        else:
-            filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & 
-                               (gdf['flaeche_qm'] >= size_input - tolerance) & 
-                               (gdf['flaeche_qm'] <= size_input + tolerance)]
+        filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
         
         st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
         
         if not filtered_gdf.empty:
-            # Karte mit Hover-Effekt und Info-Fenster
-            st.pydeck_chart(pdk.Deck(
-                initial_view_state=pdk.ViewState(latitude=filtered_gdf['lat'].mean(), longitude=filtered_gdf['lon'].mean(), zoom=13),
-                layers=[pdk.Layer("ScatterplotLayer", filtered_gdf, get_position='[lon, lat]', 
-                                  get_radius=20, get_color='[200, 30, 0, 160]', pickable=True)],
-                tooltip={"html": "<b>Flurstück:</b> {fs_text}<br/><b>Größe:</b> {flaeche_qm} qm<br/><a href='{link_markt}' target='_blank'>Zum Immobilienmarkt</a>"}
-            ))
+            # Karte zentrieren
+            m = folium.Map(location=[filtered_gdf.geometry.centroid.y.mean(), 
+                                     filtered_gdf.geometry.centroid.x.mean()], zoom_start=13)
+            
+            # Punkte hinzufügen
+            for _, row in filtered_gdf.head(100).iterrows():
+                popup_content = f"""
+                <b>Flurstück:</b> {row['fs_text']}<br>
+                <b>Größe:</b> {row['flaeche_qm']:.2f} qm<br>
+                <a href='https://immobilienmarkt.niedersachsen.de' target='_blank'>Zum Immobilienmarkt</a>
+                """
+                folium.Marker(
+                    [row.geometry.centroid.y, row.geometry.centroid.x],
+                    popup=folium.Popup(popup_content, max_width=250),
+                    icon=folium.Icon(color="red", icon="info-sign")
+                ).add_to(m)
+            
+            st_folium(m, width=1200, height=600)
             st.dataframe(filtered_gdf[['gmk__bez', 'gem__bez', 'flaeche_qm', 'fs_text']])
+        else:
+            st.warning("Keine Objekte gefunden.")
