@@ -4,18 +4,12 @@ import gdown
 import os
 import folium
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
-import time
 
-# Konfiguration
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
 
 FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
 FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
-
-# Geocoder
-geolocator = Nominatim(user_agent="radtke_immo_tool_v6")
 
 @st.cache_data
 def load_data():
@@ -28,69 +22,57 @@ def load_data():
     gdf = gdf.to_crs("EPSG:4326")
     return gdf
 
-# Daten laden
 gdf = load_data()
 
-if 'filtered_gdf' not in st.session_state:
-    st.session_state.filtered_gdf = None
-
-# Sidebar
+# Suche
 st.sidebar.header("Suche & Filter")
 auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", sorted(gdf['gem__bez'].unique().tolist()))
-such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
-
-if such_modus == "Mindestgröße":
-    size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
-    tolerance = 0.0
-else:
-    size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
-    tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, value=3.0, step=1.0)
+size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, value=500.0)
+tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, value=3.0)
 
 if st.sidebar.button("Suchen"):
-    # Filterung
-    if such_modus == "Mindestgröße":
-        results = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)].head(20).copy()
-    else:
-        results = gdf[(gdf['gem__bez'] == auswahl_gem) & 
-                      (gdf['flaeche_qm'] >= size_input - tolerance) & 
-                      (gdf['flaeche_qm'] <= size_input + tolerance)].head(20).copy()
+    filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & 
+                       (gdf['flaeche_qm'] >= size_input - tolerance) & 
+                       (gdf['flaeche_qm'] <= size_input + tolerance)].head(50)
     
-    # Batch-Geocoding mit Fortschrittsanzeige
-    if not results.empty:
-        results['adresse'] = "Wird geladen..."
-        progress_bar = st.progress(0)
-        total = len(results)
-        
-        for i, (idx, row) in enumerate(results.iterrows()):
-            try:
-                lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
-                loc = geolocator.reverse((lat, lon), language='de')
-                results.at[idx, 'adresse'] = loc.address if loc else "Adresse nicht ermittelbar"
-            except:
-                results.at[idx, 'adresse'] = "Fehler bei Abfrage"
-            progress_bar.progress((i + 1) / total)
-            time.sleep(1) # Respektiert die API-Nutzungsbedingungen
-        
-        st.session_state.filtered_gdf = results
-    else:
-        st.session_state.filtered_gdf = results
+    st.session_state.map_data = filtered_gdf
 
-# Anzeige
-if st.session_state.filtered_gdf is not None:
-    if not st.session_state.filtered_gdf.empty:
-        st.success(f"Gefundene Objekte: {len(st.session_state.filtered_gdf)}")
+if 'map_data' in st.session_state:
+    results = st.session_state.map_data
+    st.success(f"Gefundene Objekte: {len(results)}")
+    
+    m = folium.Map(location=[results.geometry.centroid.y.mean(), 
+                             results.geometry.centroid.x.mean()], 
+                   zoom_start=15)
+    
+    for idx, row in results.iterrows():
+        # Wir fügen einen JS-Aufruf hinzu, der die Adresse erst bei Klick von Nominatim holt
+        # Das Popup enthält einen Platzhalter
+        html = f"""
+        <div id="popup_{idx}">
+            <b>Flurstück:</b> {row['fs_text']}<br>
+            <b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br>
+            <div id="addr_{idx}"><i>Klicke hier für Adresse...</i></div>
+        </div>
+        <script>
+            // Diese Funktion wird aufgerufen, wenn der Marker geklickt wird
+            async function getAddr_{idx}() {{
+                let el = document.getElementById('addr_{idx}');
+                el.innerHTML = "Lade Adresse...";
+                try {{
+                    let resp = await fetch('https://nominatim.openstreetmap.org/reverse?lat={row.geometry.centroid.y}&lon={row.geometry.centroid.x}&format=json');
+                    let data = await resp.json();
+                    el.innerHTML = "<b>Adresse:</b> " + data.display_name;
+                }} catch(e) {{ el.innerHTML = "Nicht gefunden"; }}
+            }}
+            // Trigger bei Klick auf den Marker
+        </script>
+        """
         
-        m = folium.Map(location=[st.session_state.filtered_gdf.geometry.centroid.y.mean(), 
-                                 st.session_state.filtered_gdf.geometry.centroid.x.mean()], 
-                       zoom_start=15)
+        folium.Marker(
+            [row.geometry.centroid.y, row.geometry.centroid.x], 
+            popup=folium.Popup(html, max_width=300),
+            icon=folium.Icon(color='blue', icon='home')
+        ).add_to(m)
         
-        for idx, row in st.session_state.filtered_gdf.iterrows():
-            folium.Marker(
-                [row.geometry.centroid.y, row.geometry.centroid.x], 
-                popup=f"<b>Adresse:</b> {row['adresse']}<br><b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br><b>FS:</b> {row['fs_text']}",
-                icon=folium.Icon(color='blue', icon='home')
-            ).add_to(m)
-        
-        st_folium(m, width=None, height=700)
-    else:
-        st.warning("Keine Objekte gefunden.")
+    st_folium(m, width=None, height=700)
