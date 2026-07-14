@@ -15,8 +15,8 @@ gemeinden_ammerland = ["Apen", "Bad Zwischenahn", "Edewecht", "Rastede", "Wester
 gemeinde = st.sidebar.selectbox("Gemeinde", gemeinden_ammerland, index=2)
 
 groesse_option = st.sidebar.radio("Größen-Modus", ["Exakt", "Mindestgröße"])
-groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=None, placeholder="z.B. 500")
-toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=None, placeholder="z.B. 50")
+groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=None, placeholder="z.B. 1000")
+toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=None, placeholder="z.B. 3")
 
 start_search = st.sidebar.button("Suche starten")
 
