@@ -32,18 +32,6 @@ def load_data():
     gdf = gdf.to_crs("EPSG:4326")
     return gdf
 
-@st.cache_data
-def get_address(lat, lon):
-    geolocator = Nominatim(user_agent="radtke_immo_tool_v2")
-    try:
-        location = geolocator.reverse((lat, lon), language='de', addressdetails=True)
-        if location:
-            addr = location.raw.get('address', {})
-            return f"{addr.get('road', 'Unbekannt')} {addr.get('house_number', '')}".strip()
-    except:
-        pass
-    return "Adresse nicht ladbar"
-
 # --- UI ---
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
@@ -76,30 +64,43 @@ if st.session_state.search_clicked:
     st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
     
     if not filtered_gdf.empty:
-        # Begrenzung auf 20 Marker, um API-Limits zu vermeiden
-        display_gdf = filtered_gdf.head(20)
+        display_gdf = filtered_gdf.head(20) # Limit auf 20 wegen API-Performance
         
         center = [display_gdf.geometry.centroid.y.iloc[0], display_gdf.geometry.centroid.x.iloc[0]]
         m = folium.Map(location=center, zoom_start=15)
         
+        geolocator = Nominatim(user_agent="radtke_immo_tool_v4")
+        
         for _, row in display_gdf.iterrows():
             lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
-            adresse = get_address(lat, lon)
             
+            # Adresse holen
+            loc = geolocator.reverse((lat, lon), language='de', addressdetails=True)
+            addr = loc.raw.get('address', {}) if loc else {}
+            
+            str_h = f"{addr.get('road', 'Unbekannte Straße')} {addr.get('house_number', '')}".strip()
+            plz_ort = f"{addr.get('postcode', '')} {addr.get('city', addr.get('town', ''))}".strip()
+            adresse_formatiert = f"{str_h}, {plz_ort}"
+
             popup_html = f"""
-                <div style="font-family: sans-serif; width: 220px;">
-                    <b style="color: #333;">Adresse via Geocoding:</b><br>
-                    <div style="background-color: #eef; padding: 8px; border: 1px solid #ccd; border-radius: 4px; margin: 5px 0;">
-                        {adresse}
+                <div style="font-family: sans-serif; width: 230px;">
+                    <div id="adr-text" style="background-color: #f8f9fa; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-weight: bold; margin-bottom: 8px;">
+                        {adresse_formatiert}
                     </div>
+                    <button onclick="navigator.clipboard.writeText('{adresse_formatiert}'); alert('Adresse kopiert!');" 
+                            style="width: 100%; padding: 8px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        📋 Adresse kopieren
+                    </button>
                     <a href="https://grundsteuer-viewer.niedersachsen.de/b" target="_blank" 
                        style="display: block; background-color: #28a745; color: white; padding: 10px; 
-                              text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">
+                              text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 8px;">
                         Zum Grundsteuer-Viewer
                     </a>
                 </div>
             """
-            folium.Marker([lat, lon], popup=folium.Popup(popup_html, max_width=250),
+            
+            folium.Marker([lat, lon], 
+                          popup=folium.Popup(popup_html, max_width=260),
                           icon=folium.Icon(color='blue', icon='home', prefix='fa')).add_to(m)
         
         st_folium(m, width=1000, height=600)
