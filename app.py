@@ -2,14 +2,12 @@ import os
 import subprocess
 import sys
 
-# Sicherstellung, dass notwendige Pakete installiert sind
+# Sicherstellung, dass gdown installiert ist
 try:
     import gdown
-    from geopy.geocoders import Nominatim
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "gdown", "geopy"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "gdown"])
     import gdown
-    from geopy.geocoders import Nominatim
 
 import streamlit as st
 import geopandas as gpd
@@ -20,7 +18,7 @@ from streamlit_folium import st_folium
 FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
 FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
 
-# --- FUNKTIONEN ---
+# --- DATEN LADEN ---
 @st.cache_data
 def load_data():
     if not os.path.exists(FILENAME):
@@ -32,12 +30,16 @@ def load_data():
     gdf = gdf.to_crs("EPSG:4326")
     return gdf
 
-# --- UI ---
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
 st.title("Immobilien-Suche: Landkreis Ammerland")
 
 gdf = load_data()
 
+# DEBUG: Zeige Spaltennamen an, damit du siehst, welche Spalte die Adresse enthält
+with st.expander("Spaltennamen der Datei (zur Kontrolle)"):
+    st.write(gdf.columns.tolist())
+
+# --- SIDEBAR ---
 if 'search_clicked' not in st.session_state:
     st.session_state.search_clicked = False
 
@@ -64,23 +66,20 @@ if st.session_state.search_clicked:
     st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
     
     if not filtered_gdf.empty:
-        display_gdf = filtered_gdf.head(20) # Limit auf 20 wegen API-Performance
+        display_gdf = filtered_gdf.head(50) # Erhöht auf 50, da wir kein API-Limit mehr haben
         
         center = [display_gdf.geometry.centroid.y.iloc[0], display_gdf.geometry.centroid.x.iloc[0]]
         m = folium.Map(location=center, zoom_start=15)
         
-        geolocator = Nominatim(user_agent="radtke_immo_tool_v4")
-        
         for _, row in display_gdf.iterrows():
             lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
             
-            # Adresse holen
-            loc = geolocator.reverse((lat, lon), language='de', addressdetails=True)
-            addr = loc.raw.get('address', {}) if loc else {}
+            # ADRESS-LOGIK: 
+            # Passe die Spaltennamen in der Liste ['fs_text', 'lagebezeichnung', ...] 
+            # an die Spaltennamen an, die dir in der Debug-Box angezeigt werden.
+            addr_val = next((str(row[col]) for col in ['fs_text', 'lagebezeichnung', 'adresse'] if col in row and row[col]), "Adresse unbekannt")
             
-            str_h = f"{addr.get('road', 'Unbekannte Straße')} {addr.get('house_number', '')}".strip()
-            plz_ort = f"{addr.get('postcode', '')} {addr.get('city', addr.get('town', ''))}".strip()
-            adresse_formatiert = f"{str_h}, {plz_ort}"
+            adresse_formatiert = f"{addr_val}"
 
             popup_html = f"""
                 <div style="font-family: sans-serif; width: 230px;">
