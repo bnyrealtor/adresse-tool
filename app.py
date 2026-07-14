@@ -5,7 +5,6 @@ import os
 import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
 
 # Konfiguration
 st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
@@ -14,9 +13,8 @@ st.title("Immobilien-Suche: Landkreis Ammerland")
 FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
 FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
 
-# Geocoder initialisieren
-geolocator = Nominatim(user_agent="radtke_immo_tool_v4")
-geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
+# Geocoder initialisieren (wird später in der Funktion genutzt)
+geolocator = Nominatim(user_agent="radtke_immo_tool_v5")
 
 @st.cache_data
 def load_data():
@@ -30,10 +28,10 @@ def load_data():
     return gdf
 
 # Daten laden
-with st.spinner("Lade Daten..."):
+with st.spinner("Lade und berechne Flächen..."):
     gdf = load_data()
 
-# Session State für Ergebnisse
+# Session State
 if 'filtered_gdf' not in st.session_state:
     st.session_state.filtered_gdf = None
 
@@ -58,30 +56,30 @@ if st.sidebar.button("Suchen"):
                                            (gdf['flaeche_qm'] >= size_input - tolerance) & 
                                            (gdf['flaeche_qm'] <= size_input + tolerance)]
 
-# Anzeige der Ergebnisse (außerhalb des Buttons, damit es persistiert)
+# Anzeige
 if st.session_state.filtered_gdf is not None:
     st.success(f"Gefundene Objekte: {len(st.session_state.filtered_gdf)}")
     
     if not st.session_state.filtered_gdf.empty:
+        # Karte erstellen
         m = folium.Map(location=[st.session_state.filtered_gdf.geometry.centroid.y.mean(), 
                                  st.session_state.filtered_gdf.geometry.centroid.x.mean()], 
                        zoom_start=14)
         
-        for idx, row in st.session_state.filtered_gdf.head(20).iterrows():
+        # Marker ohne blockierendes Geocoding hinzufügen
+        for idx, row in st.session_state.filtered_gdf.head(50).iterrows():
             lat = row.geometry.centroid.y
             lon = row.geometry.centroid.x
-            try:
-                location = geocode((lat, lon))
-                adresse = location.address if location else "Adresse nicht gefunden"
-            except:
-                adresse = "Geocoding Fehler"
+            
+            # Popup zeigt grundlegende Daten direkt
+            popup_text = f"<b>Flurstück:</b> {row['fs_text']}<br><b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm"
             
             folium.Marker(
                 [lat, lon], 
-                popup=f"Adresse: {adresse}<br>Fläche: {round(row['flaeche_qm'], 2)} qm",
+                popup=popup_text,
                 icon=folium.Icon(color='blue', icon='home')
             ).add_to(m)
         
         st_folium(m, width=None, height=700)
     else:
-        st.warning("Keine Objekte für diese Filter gefunden.")
+        st.warning("Keine Objekte gefunden.")
