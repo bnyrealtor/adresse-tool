@@ -5,16 +5,12 @@ import os
 import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
-from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
-st.title("Immobilien-Suche: Landkreis Ammerland")
+st.set_page_config(layout="wide")
 
 FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
 FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
-
-# Geocoder
-geolocator = Nominatim(user_agent="radtke_immo_tool_v7")
+geolocator = Nominatim(user_agent="radtke_immo_tool_v8")
 
 @st.cache_data
 def load_data():
@@ -26,40 +22,33 @@ def load_data():
 
 gdf = load_data()
 
-# Hilfsfunktion für Parallelisierung
-def get_single_address(row):
-    try:
-        lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
-        loc = geolocator.reverse((lat, lon), language='de', timeout=5)
-        return loc.address if loc else "Keine Adresse gefunden"
-    except:
-        return "Fehler bei Abfrage"
-
-# UI
+# Sidebar UI
 auswahl_gem = st.sidebar.selectbox("Gemeinde", sorted(gdf['gem__bez'].unique().tolist()))
 size_input = st.sidebar.number_input("Größe genau (qm)", value=500.0)
 tol = st.sidebar.number_input("Toleranz (+/- qm)", value=3.0)
 
+# Suche (nur Filtern, kein Geocoding!)
 if st.sidebar.button("Suchen"):
-    res = gdf[(gdf['gem__bez'] == auswahl_gem) & 
-              (gdf['flaeche_qm'] >= size_input - tol) & 
-              (gdf['flaeche_qm'] <= size_input + tol)].head(30).copy()
-    
-    # Adressen parallel laden
-    with st.spinner("Lade Objektdaten..."):
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            addresses = list(executor.map(get_single_address, [row for _, row in res.iterrows()]))
-        res['adresse'] = addresses
-    
-    st.session_state.res = res
+    st.session_state.res = gdf[(gdf['gem__bez'] == auswahl_gem) & 
+                               (gdf['flaeche_qm'] >= size_input - tol) & 
+                               (gdf['flaeche_qm'] <= size_input + tol)].head(30)
 
 if 'res' in st.session_state:
     results = st.session_state.res
     m = folium.Map(location=[results.geometry.centroid.y.mean(), results.geometry.centroid.x.mean()], zoom_start=15)
+    
     for _, row in results.iterrows():
-        folium.Marker(
-            [row.geometry.centroid.y, row.geometry.centroid.x],
-            popup=f"<b>Adresse:</b> {row['adresse']}<br><b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm",
-            icon=folium.Icon(color='blue', icon='home')
-        ).add_to(m)
+        lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
+        
+        # Geocoding-Link direkt in das Popup integrieren
+        # Wir lösen die Adresse NICHT vorab auf.
+        popup_html = f"""
+        <b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br>
+        <b>FS:</b> {row['fs_text']}<br>
+        <a href="https://nominatim.openstreetmap.org/ui/reverse.html?lat={lat}&lon={lon}" target="_blank">
+        Adresse auf Karte ansehen</a>
+        """
+        
+        folium.Marker([lat, lon], popup=popup_html, icon=folium.Icon(color='blue', icon='home')).add_to(m)
+        
     st_folium(m, width=None, height=700)
