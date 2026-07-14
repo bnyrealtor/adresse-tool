@@ -16,7 +16,7 @@ gemeinde = st.sidebar.selectbox("Gemeinde", gemeinden_ammerland, index=2)
 
 groesse_option = st.sidebar.radio("Größen-Modus", ["Exakt", "Mindestgröße"])
 groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=None, placeholder="z.B. 1000")
-toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=None, placeholder="z.B. 3")
+toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=3, placeholder="z.B. 3")
 
 start_search = st.sidebar.button("Suche starten")
 
