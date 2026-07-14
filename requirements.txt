@@ -1,6 +1,7 @@
 streamlit
 geopandas
-owslib
+gdown
+folium
+streamlit-folium
 geopy
 pyproj
-streamlit-folium
