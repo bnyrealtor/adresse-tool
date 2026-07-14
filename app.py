@@ -17,6 +17,7 @@ def load_data():
         url = f'https://drive.google.com/uc?id={FILE_ID}'
         gdown.download(url, FILENAME, quiet=False)
     gdf = gpd.read_file(FILENAME)
+    # Fläche berechnen
     gdf_area = gdf.to_crs("EPSG:25832")
     gdf['flaeche_qm'] = gdf_area.geometry.area
     return gdf.to_crs("EPSG:4326")
@@ -27,10 +28,25 @@ with st.spinner("Lade Daten..."):
     st.sidebar.header("Suche & Filter")
     gemeinden = sorted(gdf['gem__bez'].unique().tolist())
     auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
-    size_input = st.sidebar.number_input("Mindestgröße in qm", min_value=0.0, step=10.0)
+    
+    # Suchmodus Auswahl
+    such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
+    
+    if such_modus == "Mindestgröße":
+        size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
+    else:
+        size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
+        # NEU: Direkte Eingabe für die Toleranz
+        tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, max_value=500.0, value=5.0, step=1.0)
 
     if st.sidebar.button("Suchen"):
-        filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
+        if such_modus == "Mindestgröße":
+            filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
+        else:
+            # Suche mit Toleranz
+            filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & 
+                               (gdf['flaeche_qm'] >= size_input - tolerance) & 
+                               (gdf['flaeche_qm'] <= size_input + tolerance)]
         
         st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
         
@@ -39,7 +55,7 @@ with st.spinner("Lade Daten..."):
             m = folium.Map(location=[filtered_gdf.geometry.centroid.y.mean(), 
                                      filtered_gdf.geometry.centroid.x.mean()], zoom_start=13)
             
-            # Punkte hinzufügen
+            # Marker hinzufügen
             for _, row in filtered_gdf.head(100).iterrows():
                 popup_content = f"""
                 <b>Flurstück:</b> {row['fs_text']}<br>
@@ -55,4 +71,4 @@ with st.spinner("Lade Daten..."):
             st_folium(m, width=1200, height=600)
             st.dataframe(filtered_gdf[['gmk__bez', 'gem__bez', 'flaeche_qm', 'fs_text']])
         else:
-            st.warning("Keine Objekte gefunden.")
+            st.warning("Keine Objekte für diese Filter gefunden.")
