@@ -37,18 +37,24 @@ if 'res' in st.session_state:
     results = st.session_state.res
     m = folium.Map(location=[results.geometry.centroid.y.mean(), results.geometry.centroid.x.mean()], zoom_start=15)
     
-    for _, row in results.iterrows():
+for _, row in results.iterrows():
         lat, lon = row.geometry.centroid.y, row.geometry.centroid.x
         
-        # Geocoding-Link direkt in das Popup integrieren
-        # Wir lösen die Adresse NICHT vorab auf.
+        # Popup-Breite auf 300px festgesetzt
         popup_html = f"""
-        <b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br>
-        <b>FS:</b> {row['fs_text']}<br>
-        <a href="https://nominatim.openstreetmap.org/ui/reverse.html?lat={lat}&lon={lon}" target="_blank">
-        Adresse auf Karte ansehen</a>
+        <div style="width: 300px;">
+            <b>Fläche:</b> {round(row['flaeche_qm'], 2)} qm<br>
+            <b>Flurstück:</b> {row['fs_text']}<br>
+            <hr>
+            <a href="https://nominatim.openstreetmap.org/ui/reverse.html?lat={lat}&lon={lon}" target="_blank" style="text-decoration: none; color: #007bff; font-weight: bold;">
+            📍 Adresse auf Karte abrufen</a>
+        </div>
         """
         
-        folium.Marker([lat, lon], popup=popup_html, icon=folium.Icon(color='blue', icon='home')).add_to(m)
+        folium.Marker(
+            [lat, lon], 
+            popup=folium.Popup(popup_html, max_width=300), 
+            icon=folium.Icon(color='blue', icon='home')
+        ).add_to(m)
         
     st_folium(m, width=None, height=700)
