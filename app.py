@@ -27,7 +27,7 @@ with st.spinner("Lade Kartendaten..."):
 # Sidebar
 st.sidebar.header("Suche & Filter")
 auswahl_gem = st.sidebar.selectbox("Gemeinde", sorted(gdf['gem__bez'].unique().tolist()))
-size_input = st.sidebar.number_input("Größe genau (qm)", value=500.0)
+size_input = st.sidebar.number_input("Größe genau (qm)", value=None)
 tol = st.sidebar.number_input("Toleranz (+/- qm)", value=3.0)
 
 if st.sidebar.button("Suchen"):
