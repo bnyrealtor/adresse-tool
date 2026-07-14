@@ -6,73 +6,74 @@ from pyproj import Transformer
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="Immobilien-Tool NI", layout="wide")
+st.set_page_config(page_title="ImmoDaten-Tool NI", layout="wide")
+
+# --- SIDEBAR KONFIGURATION ---
+st.sidebar.header("Filter & Parameter")
+ort = st.sidebar.text_input("Ort oder Gemeinde", value="Oldenburg")
+groesse_option = st.sidebar.radio("Größen-Modus", ["Exakt", "Mindestgröße"])
+groesse_wert = st.sidebar.number_input("Größe in m²", min_value=0, value=500)
+toleranz = st.sidebar.number_input("Toleranz (+/- in m²)", min_value=0, value=50)
+
 st.title("Immobilien-Abfrage & Grundsteuer-Tool")
 
-# 1. Geocoding
+# --- FUNKTIONEN ---
 def get_coords(address):
     geolocator = Nominatim(user_agent="radtke_immo_tool")
     location = geolocator.geocode(address)
-    if location:
-        return location.latitude, location.longitude
-    return None
+    return (location.latitude, location.longitude) if location else None
 
-# 2. WFS Abfrage
 def fetch_wfs_data(lat, lon):
     wfs = WebFeatureService(url="https://opendata.lgln.niedersachsen.de/wfs/gds_alkis", version="2.0.0")
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:25832", always_xy=True)
     e, n = transformer.transform(lon, lat)
-    bbox = (e-50, n-50, e+50, n+50)
-    
-    # Abfrage der Flurstücke
+    bbox = (e-500, n-500, e+500, n+500) # Erhöhter Radius für Suche
     response = wfs.getfeature(typename='alkis:flurstueck', bbox=bbox, outputFormat='json')
     return gpd.read_file(response)
 
-# UI Eingabe
-address_input = st.text_input("Adresse eingeben (Straße, PLZ, Ort)")
-
-if st.button("Abfrage starten"):
-    with st.spinner("Suche Flurstück..."):
-        coords = get_coords(address_input)
+# --- HAUPTTEIL ---
+if st.button("Suche starten"):
+    with st.spinner("Suche Flurstücke..."):
+        coords = get_coords(ort)
         if coords:
             lat, lon = coords
             gdf = fetch_wfs_data(lat, lon)
             
             if not gdf.empty:
-                # Annahme: Deine Daten enthalten eine Spalte 'lagebezeichnung'
-                # Falls nicht, prüfe mit st.write(gdf.columns) die verfügbaren Spalten
-                adresse_text = gdf.iloc[0].get('lagebezeichnung', address_input)
+                # Filterung nach Grundstücksgröße
+                # WICHTIG: Ersetze 'flaeche' durch den tatsächlichen Spaltennamen deines GDF
+                if groesse_option == "Exakt":
+                    filtered_gdf = gdf[(gdf['flaeche'] >= (groesse_wert - toleranz)) & (gdf['flaeche'] <= (groesse_wert + toleranz))]
+                else:
+                    filtered_gdf = gdf[gdf['flaeche'] >= groesse_wert]
                 
-                # HTML Popup
-                popup_html = f"""
-                    <div style="font-family: sans-serif; width: 220px;">
-                        <div style="margin-bottom: 10px;">
+                st.success(f"{len(filtered_gdf)} Flurstücke gefunden!")
+                
+                # Karte anzeigen
+                m = folium.Map(location=[lat, lon], zoom_start=15)
+                
+                for _, row in filtered_gdf.iterrows():
+                    # Popup-HTML
+                    adresse = row.get('lagebezeichnung', 'Adresse unbekannt')
+                    popup_html = f"""
+                        <div style="font-family: sans-serif; width: 220px;">
                             <b>Adresse:</b><br>
                             <div style="background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc; border-radius: 3px; font-weight: bold;">
-                                {adresse_text}
+                                {adresse}
                             </div>
-                            <p style="font-size: 10px; color: #666; margin-top: 5px;">
-                                (Doppelklick zum Kopieren)
-                            </p>
+                            <br>
+                            <a href="https://grundsteuer-viewer.niedersachsen.de/b" target="_blank" 
+                               style="display: block; background-color: #28a745; color: white; padding: 10px; 
+                                      text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                Zum Grundsteuer-Viewer
+                            </a>
                         </div>
-                        <a href="https://grundsteuer-viewer.niedersachsen.de/b" target="_blank" 
-                           style="display: block; background-color: #28a745; color: white; padding: 10px; 
-                                  text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                            Zum Grundsteuer-Viewer
-                        </a>
-                    </div>
-                """
+                    """
+                    folium.Marker([row.geometry.centroid.y, row.geometry.centroid.x], 
+                                  popup=folium.Popup(popup_html, max_width=250)).add_to(m)
                 
-                # Karte erstellen
-                m = folium.Map(location=[lat, lon], zoom_start=19)
-                folium.Marker(
-                    [lat, lon], 
-                    popup=folium.Popup(popup_html, max_width=250)
-                ).add_to(m)
-                
-                st.success("Flurstück gefunden!")
-                st_folium(m, width=700, height=500)
+                st_folium(m, width=1000, height=600)
             else:
-                st.warning("Keine Flurstücksdaten an diesem Punkt gefunden.")
+                st.warning("Keine passenden Flurstücke gefunden.")
         else:
-            st.error("Adresse konnte nicht gefunden werden.")
+            st.error("Ort nicht gefunden.")
