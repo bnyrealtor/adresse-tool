@@ -10,44 +10,40 @@ from streamlit_folium import st_folium
 st.set_page_config(page_title="Immobilien-Tool", layout="wide")
 st.title("LGLN Immobilien-Daten-Tool")
 
-# 1. Geocoding: Adresse zu Koordinaten
+# 1. Funktionen definieren
 def get_coords(address):
     geolocator = Nominatim(user_agent="radtke_immo_tool_v2")
     location = geolocator.geocode(address)
-    if location:
-        return location.latitude, location.longitude
-    return None
+    return (location.latitude, location.longitude) if location else None
 
-# 2. WFS-Abfrage
 def fetch_wfs_data(lat, lon):
     try:
         wfs = WebFeatureService(url="https://opendata.lgln.niedersachsen.de/wfs/gds_alkis", version="2.0.0")
         transformer = Transformer.from_crs("EPSG:4326", "EPSG:25832", always_xy=True)
         e, n = transformer.transform(lon, lat)
         bbox = (e-50, n-50, e+50, n+50)
-        
-        # 'alkis:flurstueck' ist der Standard-Layer. Ggf. anpassen!
         response = wfs.getfeature(typename='alkis:flurstueck', bbox=bbox, outputFormat='json')
         return gpd.read_file(response)
-    except Exception as e:
-        st.error(f"Fehler bei der WFS-Abfrage: {e}")
+    except:
         return None
 
-# UI
-address_input = st.text_input("Adresse eingeben (Straße, PLZ, Ort)")
+# 2. Sidebar für die Eingabe
+with st.sidebar:
+    st.header("Suche")
+    address_input = st.text_input("Adresse eingeben (Straße, PLZ, Ort)")
+    run_button = st.button("Abfrage starten")
 
-if st.button("Abfrage starten"):
+# 3. Hauptbereich für die Karte
+if run_button:
     coords = get_coords(address_input)
     if coords:
         lat, lon = coords
         gdf = fetch_wfs_data(lat, lon)
         
         if gdf is not None and not gdf.empty:
-            # Hier Spaltennamen anpassen, falls die Adressdaten anders heißen
-            # Falls deine Daten eine Spalte 'lagebezeichnung' haben:
             adresse_text = gdf.iloc[0].get('lagebezeichnung', 'Adresse nicht verfügbar')
             
-            # Popup-HTML (Dein gewünschtes Format)
+            # HTML Popup
             popup_html = f"""
             <div style="width: 250px; font-family: sans-serif; padding: 5px;">
                 <div style="font-size: 16px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
@@ -64,16 +60,13 @@ if st.button("Abfrage starten"):
             </div>
             """
             
-            # Karte erstellen
             m = folium.Map(location=[lat, lon], zoom_start=19)
-            folium.Marker(
-                [lat, lon],
-                popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.Icon(color='blue', icon='home')
-            ).add_to(m)
-            
+            folium.Marker([lat, lon], popup=folium.Popup(popup_html, max_width=300), 
+                          icon=folium.Icon(color='blue', icon='home')).add_to(m)
             st_folium(m, width=700, height=500)
         else:
             st.warning("Keine Daten gefunden.")
     else:
         st.error("Adresse nicht gefunden.")
+else:
+    st.info("Bitte gib eine Adresse in der Sidebar ein und klicke auf 'Abfrage starten'.")
