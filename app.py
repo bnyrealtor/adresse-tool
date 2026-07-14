@@ -1,7 +1,16 @@
+import os
+import subprocess
+import sys
+
+# Sicherstellung, dass gdown installiert ist
+try:
+    import gdown
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "gdown"])
+    import gdown
+
 import streamlit as st
 import geopandas as gpd
-import gdown
-import os
 import folium
 from streamlit_folium import st_folium
 
@@ -42,9 +51,11 @@ such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
 
 if such_modus == "Mindestgröße":
     size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
+    tolerance = 0.0 # Nicht verwendet bei Mindestgröße
 else:
     size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
-    tolerance = st.sidebar.slider("Toleranz (+/- qm)", 0.0, 50.0, 5.0)
+    # Eingabefeld statt Slider
+    tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, max_value=500.0, value=5.0, step=1.0)
 
 suchen_button = st.sidebar.button("Suchen")
 
@@ -65,7 +76,7 @@ if suchen_button:
         m = folium.Map(location=center, zoom_start=15)
         
         for _, row in filtered_gdf.iterrows():
-            # Adresse aus den Attributen (passe 'fs_text' oder 'lagebezeichnung' an, falls nötig)
+            # Adresse aus Attributen (bitte Spaltennamen 'fs_text' ggf. prüfen)
             adresse = row.get('fs_text', 'Adresse unbekannt')
             
             popup_html = f"""
