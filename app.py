@@ -1,75 +1,78 @@
 import streamlit as st
 import geopandas as gpd
-import gdown
-import os
+from owslib.wfs import WebFeatureService
+from geopy.geocoders import Nominatim
+from pyproj import Transformer
 import folium
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="Immo-Finder Ammerland", layout="wide")
-st.title("Immobilien-Suche: Landkreis Ammerland")
+st.set_page_config(page_title="Immobilien-Tool NI", layout="wide")
+st.title("Immobilien-Abfrage & Grundsteuer-Tool")
 
-FILE_ID = '1tQmgDiC8uoksCf6NPiJx2otsg37X4SAf'
-FILENAME = 'lkr_03451_Ammerland_kon.gpkg'
+# 1. Geocoding
+def get_coords(address):
+    geolocator = Nominatim(user_agent="radtke_immo_tool")
+    location = geolocator.geocode(address)
+    if location:
+        return location.latitude, location.longitude
+    return None
 
-# Session State initialisieren, um Ergebnisse zu speichern
-if 'search_results' not in st.session_state:
-    st.session_state.search_results = None
-
-@st.cache_data
-def load_data():
-    if not os.path.exists(FILENAME):
-        url = f'https://drive.google.com/uc?id={FILE_ID}'
-        gdown.download(url, FILENAME, quiet=False)
-    gdf = gpd.read_file(FILENAME)
-    gdf_area = gdf.to_crs("EPSG:25832")
-    gdf['flaeche_qm'] = gdf_area.geometry.area
-    return gdf.to_crs("EPSG:4326")
-
-with st.spinner("Lade Daten..."):
-    gdf = load_data()
+# 2. WFS Abfrage
+def fetch_wfs_data(lat, lon):
+    wfs = WebFeatureService(url="https://opendata.lgln.niedersachsen.de/wfs/gds_alkis", version="2.0.0")
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:25832", always_xy=True)
+    e, n = transformer.transform(lon, lat)
+    bbox = (e-50, n-50, e+50, n+50)
     
-    st.sidebar.header("Suche & Filter")
-    gemeinden = sorted(gdf['gem__bez'].unique().tolist())
-    auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
-    such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
-    
-    if such_modus == "Mindestgröße":
-        size_input = st.sidebar.number_input("Größe ab (qm)", min_value=0.0, step=10.0)
-    else:
-        size_input = st.sidebar.number_input("Größe genau (qm)", min_value=0.0, step=1.0)
-        tolerance = st.sidebar.number_input("Toleranz (+/- qm)", min_value=0.0, max_value=500.0, value=5.0, step=1.0)
+    # Abfrage der Flurstücke
+    response = wfs.getfeature(typename='alkis:flurstueck', bbox=bbox, outputFormat='json')
+    return gpd.read_file(response)
 
-    # Button-Logik mit Session State
-    if st.sidebar.button("Suchen"):
-        if such_modus == "Mindestgröße":
-            st.session_state.search_results = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
-        else:
-            st.session_state.search_results = gdf[(gdf['gem__bez'] == auswahl_gem) & 
-                                                  (gdf['flaeche_qm'] >= size_input - tolerance) & 
-                                                  (gdf['flaeche_qm'] <= size_input + tolerance)]
+# UI Eingabe
+address_input = st.text_input("Adresse eingeben (Straße, PLZ, Ort)")
 
-    # Ergebnisse anzeigen, falls sie im Session State gespeichert sind
-    if st.session_state.search_results is not None:
-        filtered_gdf = st.session_state.search_results
-        st.success(f"Gefundene Objekte: {len(filtered_gdf)}")
-        
-        if not filtered_gdf.empty:
-            m = folium.Map(location=[filtered_gdf.geometry.centroid.y.mean(), 
-                                     filtered_gdf.geometry.centroid.x.mean()], zoom_start=13)
+if st.button("Abfrage starten"):
+    with st.spinner("Suche Flurstück..."):
+        coords = get_coords(address_input)
+        if coords:
+            lat, lon = coords
+            gdf = fetch_wfs_data(lat, lon)
             
-            for _, row in filtered_gdf.head(100).iterrows():
-                popup_content = f"""
-                <b>Flurstück:</b> {row['fs_text']}<br>
-                <b>Größe:</b> {row['flaeche_qm']:.2f} qm<br>
-                <a href='https://immobilienmarkt.niedersachsen.de' target='_blank'>Zum Immobilienmarkt</a>
+            if not gdf.empty:
+                # Annahme: Deine Daten enthalten eine Spalte 'lagebezeichnung'
+                # Falls nicht, prüfe mit st.write(gdf.columns) die verfügbaren Spalten
+                adresse_text = gdf.iloc[0].get('lagebezeichnung', address_input)
+                
+                # HTML Popup
+                popup_html = f"""
+                    <div style="font-family: sans-serif; width: 220px;">
+                        <div style="margin-bottom: 10px;">
+                            <b>Adresse:</b><br>
+                            <div style="background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc; border-radius: 3px; font-weight: bold;">
+                                {adresse_text}
+                            </div>
+                            <p style="font-size: 10px; color: #666; margin-top: 5px;">
+                                (Doppelklick zum Kopieren)
+                            </p>
+                        </div>
+                        <a href="https://grundsteuer-viewer.niedersachsen.de/b" target="_blank" 
+                           style="display: block; background-color: #28a745; color: white; padding: 10px; 
+                                  text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                            Zum Grundsteuer-Viewer
+                        </a>
+                    </div>
                 """
+                
+                # Karte erstellen
+                m = folium.Map(location=[lat, lon], zoom_start=19)
                 folium.Marker(
-                    [row.geometry.centroid.y, row.geometry.centroid.x],
-                    popup=folium.Popup(popup_content, max_width=250),
-                    icon=folium.Icon(color="red", icon="info-sign")
+                    [lat, lon], 
+                    popup=folium.Popup(popup_html, max_width=250)
                 ).add_to(m)
-            
-            st_folium(m, width=1200, height=600)
-            st.dataframe(filtered_gdf[['gmk__bez', 'gem__bez', 'flaeche_qm', 'fs_text']])
+                
+                st.success("Flurstück gefunden!")
+                st_folium(m, width=700, height=500)
+            else:
+                st.warning("Keine Flurstücksdaten an diesem Punkt gefunden.")
         else:
-            st.warning("Keine Objekte für diese Filter gefunden.")
+            st.error("Adresse konnte nicht gefunden werden.")
