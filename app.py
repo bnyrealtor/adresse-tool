@@ -15,11 +15,19 @@ def load_data():
         url = f'https://drive.google.com/uc?id={FILE_ID}'
         gdown.download(url, FILENAME, quiet=False)
     gdf = gpd.read_file(FILENAME)
-    if gdf.crs != "EPSG:4326":
-        gdf = gdf.to_crs("EPSG:4326")
-    # Berechnung der Fläche in qm
+    
+    # Projektion für Flächenberechnung
     gdf_area = gdf.to_crs("EPSG:25832")
     gdf['flaeche_qm'] = gdf_area.geometry.area
+    
+    # Transformation in WGS84 für die Karte
+    gdf = gdf.to_crs("EPSG:4326")
+    
+    # HIER DIE KORREKTUR: Explizite lat/lon Spalten für st.map erstellen
+    # Wir nehmen den Centroid (Mittelpunkt) des Grundstücks als Koordinatenpunkt
+    gdf['lat'] = gdf.geometry.centroid.y
+    gdf['lon'] = gdf.geometry.centroid.x
+    
     return gdf
 
 with st.spinner("Lade und berechne Flächen..."):
@@ -29,7 +37,6 @@ with st.spinner("Lade und berechne Flächen..."):
     gemeinden = sorted(gdf['gem__bez'].unique().tolist())
     auswahl_gem = st.sidebar.selectbox("Gemeinde wählen", gemeinden)
     
-    # NEU: Modus wählen
     such_modus = st.sidebar.radio("Suchmodus", ["Mindestgröße", "Exakte Größe"])
     
     if such_modus == "Mindestgröße":
@@ -39,11 +46,9 @@ with st.spinner("Lade und berechne Flächen..."):
         tolerance = st.sidebar.slider("Toleranz (+/- qm)", 0.0, 50.0, 5.0)
 
     if st.sidebar.button("Suchen"):
-        # Filter-Logik
         if such_modus == "Mindestgröße":
             filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & (gdf['flaeche_qm'] >= size_input)]
         else:
-            # Suche mit Toleranz (wegen der Kommastellen in Katasterdaten)
             filtered_gdf = gdf[(gdf['gem__bez'] == auswahl_gem) & 
                                (gdf['flaeche_qm'] >= size_input - tolerance) & 
                                (gdf['flaeche_qm'] <= size_input + tolerance)]
@@ -52,6 +57,7 @@ with st.spinner("Lade und berechne Flächen..."):
         
         if not filtered_gdf.empty:
             st.dataframe(filtered_gdf[['gmk__bez', 'gem__bez', 'flaeche_qm', 'fs_text']])
+            # st.map nutzt jetzt die neuen 'lat' und 'lon' Spalten automatisch!
             st.map(filtered_gdf.head(100))
         else:
             st.warning("Keine Objekte für diese Filter gefunden.")
